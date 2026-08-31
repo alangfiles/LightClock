@@ -1,0 +1,286 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <title>Light Clock</title>
+  <style>
+    :root {
+      color: #17211f;
+      background: #e7e0cf;
+      font-family: Georgia, serif;
+    }
+
+    body {
+      max-width: 760px;
+      margin: 0 auto;
+      padding: 32px 20px;
+      text-align: center;
+    }
+
+    .clock-faces {
+      display: grid;
+      grid-template-columns: repeat(2, minmax(0, 1fr));
+      gap: 28px;
+      margin-top: 32px;
+    }
+
+    .clock-face {
+      margin: 0;
+    }
+
+    canvas {
+      width: min(100%, 300px);
+      height: auto;
+      display: block;
+      margin: 0 auto;
+    }
+
+    h1 {
+      font-size: 1.5rem;
+      margin: 16px 0 0;
+    }
+
+    .clock-events {
+      list-style: none;
+      margin: 12px 0 0;
+      padding: 0;
+      line-height: 1.5;
+    }
+
+    .matching-times {
+      margin-top: 36px;
+    }
+
+    @media (max-width: 600px) {
+      .clock-faces {
+        grid-template-columns: 1fr;
+      }
+    }
+  </style>
+  <script>
+    function getTime(){
+      const clock = document.getElementById("clock");
+      const oldClock = document.getElementById("old-clock");
+      const locationDisplay = document.getElementById("location");
+      let latitude = 40.4173;
+      let longitude = -82.9071;
+      let isFallback = true;
+      const updateLocation = (newLatitude, newLongitude, useFallback = false) => {
+        latitude = newLatitude;
+        longitude = newLongitude;
+        isFallback = useFallback;
+        const coordinates = `${latitude.toFixed(4)}, ${longitude.toFixed(4)}`;
+        locationDisplay.textContent = isFallback ? `Location: Ohio fallback (${coordinates})` : `Location: ${coordinates}`;
+      };
+
+      const update = () => {
+        const currentTime = new Date();
+        clock.textContent = `Alan Time: ${getNewTime(currentTime, latitude, longitude)}`;
+        oldClock.textContent = `Imperial Time: ${currentTime.toLocaleTimeString()}`;
+        const solarTimes = getSolarTimes(currentTime, latitude, longitude);
+        document.getElementById("imperial-sunset").textContent = formatClockTime(solarTimes.sunset);
+        document.getElementById("imperial-sunrise").textContent = formatClockTime(solarTimes.sunrise);
+        document.getElementById("imperial-noon").textContent = formatClockTime(solarTimes.noon);
+        document.getElementById("imperial-midnight").textContent = formatClockTime(solarTimes.noon + 12);
+        const daylightMilliseconds = (solarTimes.sunset - solarTimes.sunrise) * 3600000;
+        const nightMilliseconds = (24 - (solarTimes.sunset - solarTimes.sunrise)) * 3600000;
+        document.getElementById("imperial-daylight-hours").textContent = `${(daylightMilliseconds / 3600000).toFixed(2)} hours`;
+        document.getElementById("alan-daylight-second").textContent = formatMilliseconds(daylightMilliseconds / 43200);
+        document.getElementById("alan-night-second").textContent = formatMilliseconds(nightMilliseconds / 43200);
+        const matchingTimes = getMatchingTimes(currentTime, latitude, longitude);
+        document.getElementById("matching-times").textContent = matchingTimes.length
+          ? matchingTimes.map(formatClockTime).join(" and ")
+          : "No matching times today.";
+        const alanTime = getAlanTimeParts(currentTime, latitude, longitude);
+        drawClockFace(document.getElementById("alan-clock-face"), alanTime, "#d86d35");
+        drawClockFace(document.getElementById("imperial-clock-face"), {
+          hour: currentTime.getHours(),
+          minute: currentTime.getMinutes(),
+          second: currentTime.getSeconds()
+        }, "#266a69");
+      };
+
+      updateLocation(latitude, longitude, true);
+      update();
+      window.setInterval(update, 100);
+
+      if (navigator.geolocation) {
+        navigator.geolocation.getCurrentPosition(
+          ({ coords }) => updateLocation(coords.latitude, coords.longitude),
+          () => updateLocation(latitude, longitude, true),
+          { maximumAge: 3600000, timeout: 10000 }
+        );
+      }
+    }
+
+    function getDaylightHours(input_date, latitude = 40.4173){
+      const date = new Date(input_date);
+      const yearStart = Date.UTC(date.getUTCFullYear(), 0, 1);
+      const dayOfYear = (Date.UTC(date.getUTCFullYear(), date.getUTCMonth(), date.getUTCDate()) - yearStart) / 86400000 + 1;
+      const declination = -23.44 * Math.cos((2 * Math.PI * (dayOfYear + 10)) / 365.2425);
+      const latitudeRadians = latitude * Math.PI / 180;
+      const declinationRadians = declination * Math.PI / 180;
+      const hourAngleCosine = -Math.tan(latitudeRadians) * Math.tan(declinationRadians);
+      const hourAngle = Math.acos(Math.max(-1, Math.min(1, hourAngleCosine)));
+
+      return 24 * hourAngle / Math.PI;
+    }
+
+    function getSolarTimes(input_date, latitude = 40.4173, longitude = -82.9071){
+      const date = new Date(input_date);
+      const daylightHours = getDaylightHours(date, latitude);
+      const noon = 12 - longitude / 15 - date.getTimezoneOffset() / 60;
+
+      return {
+        noon,
+        sunrise: noon - daylightHours / 2,
+        sunset: noon + daylightHours / 2
+      };
+    }
+
+    function formatClockTime(hours){
+      const totalMinutes = Math.round((((hours % 24) + 24) % 24) * 60);
+      const hour = Math.floor((totalMinutes % 1440) / 60);
+      const minute = totalMinutes % 60;
+      const displayHour = hour % 12 || 12;
+      const period = hour < 12 ? "AM" : "PM";
+
+      return `${displayHour}:${String(minute).padStart(2, "0")} ${period}`;
+    }
+
+    function formatMilliseconds(milliseconds){
+      return `${milliseconds.toFixed(0)} imperial milliseconds`;
+    }
+
+    function getMatchingTimes(input_date, latitude = 40.4173, longitude = -82.9071){
+      const date = new Date(input_date);
+      const solarTimes = getSolarTimes(date, latitude, longitude);
+      const daylightHours = solarTimes.sunset - solarTimes.sunrise;
+      const nightHours = 24 - daylightHours;
+      const segments = [
+        { start: solarTimes.sunrise, duration: daylightHours, alanStart: 6 },
+        { start: solarTimes.sunset, duration: nightHours, alanStart: 18 }
+      ];
+      const matches = [];
+
+      for (const segment of segments) {
+        const alanRate = 12 / segment.duration;
+        for (let offset = -2; offset <= 2; offset += 1) {
+          const time = (12 * offset - segment.alanStart + alanRate * segment.start) / (alanRate - 1);
+          if (time >= segment.start && time < segment.start + segment.duration) {
+            matches.push(Math.round(time * 60) / 60);
+          }
+        }
+      }
+
+      return [...new Set(matches)].sort((first, second) => first - second);
+    }
+
+    function getAlanTimeParts(input_date, latitude = 40.4173, longitude = -82.9071){
+      const date = new Date(input_date);
+      const solarTimes = getSolarTimes(date, latitude, longitude);
+      const daylightHours = solarTimes.sunset - solarTimes.sunrise;
+      const localHours = date.getHours() + date.getMinutes() / 60 + date.getSeconds() / 3600;
+      const lightHours = ((localHours - solarTimes.sunrise) + 24) % 24;
+      const isDaylight = lightHours < daylightHours;
+      const segmentLength = isDaylight ? daylightHours / 12 : (24 - daylightHours) / 12;
+      const segmentPosition = isDaylight ? lightHours / segmentLength : (lightHours - daylightHours) / segmentLength;
+      const hour = Math.floor(segmentPosition);
+      const minute = Math.floor((segmentPosition % 1) * 60);
+      const second = Math.floor((((segmentPosition % 1) * 60) % 1) * 60);
+      const alanHour = (hour + (isDaylight ? 6 : 18)) % 24;
+      const displayHour = alanHour % 12 || 12;
+      const period = alanHour < 12 ? "AM" : "PM";
+
+      return { hour: alanHour, minute, second, displayHour, period };
+    }
+
+    function getNewTime(input_date, latitude = 40.4173, longitude = -82.9071){
+      const alanTime = getAlanTimeParts(input_date, latitude, longitude);
+
+      return `${alanTime.displayHour}:${String(alanTime.minute).padStart(2, "0")}:${String(alanTime.second).padStart(2, "0")} ${alanTime.period}`;
+    }
+
+    function drawClockFace(canvas, time, accentColor){
+      const context = canvas.getContext && canvas.getContext("2d");
+      if (!context) {
+        return;
+      }
+
+      const size = canvas.width;
+      const center = size / 2;
+      const radius = center - 12;
+      context.clearRect(0, 0, size, size);
+      context.fillStyle = "#fffaf0";
+      context.beginPath();
+      context.arc(center, center, radius, 0, 2 * Math.PI);
+      context.fill();
+      context.strokeStyle = "#17211f";
+      context.lineWidth = 4;
+      context.stroke();
+
+      for (let mark = 0; mark < 60; mark += 1) {
+        const angle = mark * Math.PI / 30 - Math.PI / 2;
+        const innerRadius = radius - (mark % 5 === 0 ? 18 : 9);
+        context.beginPath();
+        context.moveTo(center + Math.cos(angle) * innerRadius, center + Math.sin(angle) * innerRadius);
+        context.lineTo(center + Math.cos(angle) * (radius - 4), center + Math.sin(angle) * (radius - 4));
+        context.lineWidth = mark % 5 === 0 ? 3 : 1;
+        context.stroke();
+      }
+
+      const drawHand = (angle, length, width, color) => {
+        context.beginPath();
+        context.moveTo(center, center);
+        context.lineTo(center + Math.cos(angle) * length, center + Math.sin(angle) * length);
+        context.strokeStyle = color;
+        context.lineWidth = width;
+        context.lineCap = "round";
+        context.stroke();
+      };
+
+      drawHand(((time.hour % 12 + time.minute / 60) * Math.PI / 6) - Math.PI / 2, radius * 0.52, 7, "#17211f");
+      drawHand(((time.minute + time.second / 60) * Math.PI / 30) - Math.PI / 2, radius * 0.74, 5, "#17211f");
+      drawHand((time.second * Math.PI / 30) - Math.PI / 2, radius * 0.8, 2, accentColor);
+      context.fillStyle = accentColor;
+      context.beginPath();
+      context.arc(center, center, 7, 0, 2 * Math.PI);
+      context.fill();
+    }
+  </script>
+</head>
+<body onload="getTime();">
+  <p id="location">Location: Finding your location...</p>
+  <p>A clock based on your location. Alan Time is a wonderful new system where there are 12 hours of sunlight every day! Midnight is in the middle of the night, and noon is in the middle of the day. All of this beautiful time symmetry comes at the low price of "second variability" not all seconds are created equal anymore. Small price to pay!</p>
+  <section class="clock-faces">
+    <figure class="clock-face">
+      <canvas id="alan-clock-face" width="320" height="320" aria-label="Alan Time analog clock"></canvas>
+      <h1 id="clock">Alan Time: TI:ME</h1>
+      <ul class="clock-events">
+        <li>sunrise at 6:00 AM</li>
+        <li>sunset at 6:00 PM</li>
+        <li>mid day at 12:00 PM</li>
+        <li>mid night at 12:00 AM</li>
+        <li>daylight second: <span id="alan-daylight-second">TI:ME</span></li>
+        <li>night second: <span id="alan-night-second">TI:ME</span></li>
+      </ul>
+    </figure>
+    <figure class="clock-face">
+      <canvas id="imperial-clock-face" width="320" height="320" aria-label="Imperial Time analog clock"></canvas>
+      <h1 id="old-clock">Imperial Time: TI:ME</h1>
+      <ul class="clock-events">
+        <li>sunrise at <span id="imperial-sunrise">TI:ME</span></li>
+        <li>sunset at <span id="imperial-sunset">TI:ME</span></li>
+        <li>mid day at <span id="imperial-noon">TI:ME</span></li>
+        <li>mid night at <span id="imperial-midnight">TI:ME</span></li>
+        <li>hours of sunlight: <span id="imperial-daylight-hours">TI:ME</span></li>
+      </ul>
+    </figure>
+  </section>
+  <section class="matching-times">
+    <h2>Even a broken clock is right twice a day...</h2>
+    <p>Because Alan Time actually moves forward (at two different rates), there's not always matches unless the imperial time has sunrise or sunset before 6am/pm.</p>
+    <p id="matching-times">Finding matching times...</p>
+  </section>
+</body>
+</html>
