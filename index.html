@@ -91,18 +91,27 @@
         document.getElementById("matching-times").textContent = matchingTimes.length
           ? matchingTimes.map(formatClockTime).join(" and ")
           : "No matching times today.";
+
+        // Alan Time parts (contains both rounded integers for text and exact floats for the canvas)
         const alanTime = getAlanTimeParts(currentTime, latitude, longitude);
         drawClockFace(document.getElementById("alan-clock-face"), alanTime, "#d86d35");
+
+        // Imperial Time with fractional seconds and minutes
+        const smoothImperialSecond = currentTime.getSeconds() + currentTime.getMilliseconds() / 1000;
+        const smoothImperialMinute = currentTime.getMinutes() + smoothImperialSecond / 60;
+        const smoothImperialHour = currentTime.getHours() + smoothImperialMinute / 60;
+
         drawClockFace(document.getElementById("imperial-clock-face"), {
-          hour: currentTime.getHours(),
-          minute: currentTime.getMinutes(),
-          second: currentTime.getSeconds()
+          hour: smoothImperialHour,
+          minute: smoothImperialMinute,
+          second: smoothImperialSecond
         }, "#266a69");
+
+        window.requestAnimationFrame(update);
       };
 
       updateLocation(latitude, longitude, true);
-      update();
-      window.setInterval(update, 100);
+      window.requestAnimationFrame(update);
 
       if (navigator.geolocation) {
         navigator.geolocation.getCurrentPosition(
@@ -180,25 +189,46 @@
       const date = new Date(input_date);
       const solarTimes = getSolarTimes(date, latitude, longitude);
       const daylightHours = solarTimes.sunset - solarTimes.sunrise;
-      const localHours = date.getHours() + date.getMinutes() / 60 + date.getSeconds() / 3600;
+      
+      // High-precision local hours including milliseconds
+      const localHours = date.getHours() + 
+                         date.getMinutes() / 60 + 
+                         date.getSeconds() / 3600 + 
+                         date.getMilliseconds() / 3600000;
+                         
       const lightHours = ((localHours - solarTimes.sunrise) + 24) % 24;
       const isDaylight = lightHours < daylightHours;
       const segmentLength = isDaylight ? daylightHours / 12 : (24 - daylightHours) / 12;
       const segmentPosition = isDaylight ? lightHours / segmentLength : (lightHours - daylightHours) / segmentLength;
-      const hour = Math.floor(segmentPosition);
-      const minute = Math.floor((segmentPosition % 1) * 60);
-      const second = Math.floor((((segmentPosition % 1) * 60) % 1) * 60);
-      const alanHour = (hour + (isDaylight ? 6 : 18)) % 24;
+      
+      // Continuous fractional values for rendering smooth hands
+      const rawSecond = (((segmentPosition % 1) * 60) % 1) * 60;
+      const rawMinute = (segmentPosition % 1) * 60;
+      const rawAlanHour = (segmentPosition + (isDaylight ? 6 : 18)) % 24;
+
+      // Integer truncated values for the digital display readout
+      const intHour = Math.floor(segmentPosition);
+      const intMinute = Math.floor(rawMinute);
+      const intSecond = Math.floor(rawSecond);
+      const alanHour = (intHour + (isDaylight ? 6 : 18)) % 24;
       const displayHour = alanHour % 12 || 12;
       const period = alanHour < 12 ? "AM" : "PM";
 
-      return { hour: alanHour, minute, second, displayHour, period };
+      return { 
+        hour: rawAlanHour, 
+        minute: rawMinute, 
+        second: rawSecond, 
+        intHour: alanHour, 
+        intMinute, 
+        intSecond, 
+        displayHour, 
+        period 
+      };
     }
 
     function getNewTime(input_date, latitude = 40.4173, longitude = -82.9071){
       const alanTime = getAlanTimeParts(input_date, latitude, longitude);
-
-      return `${alanTime.displayHour}:${String(alanTime.minute).padStart(2, "0")}:${String(alanTime.second).padStart(2, "0")} ${alanTime.period}`;
+      return `${alanTime.displayHour}:${String(alanTime.intMinute).padStart(2, "0")}:${String(alanTime.intSecond).padStart(2, "0")} ${alanTime.period}`;
     }
 
     function drawClockFace(canvas, time, accentColor){
@@ -239,9 +269,13 @@
         context.stroke();
       };
 
-      drawHand(((time.hour % 12 + time.minute / 60) * Math.PI / 6) - Math.PI / 2, radius * 0.52, 7, "#17211f");
-      drawHand(((time.minute + time.second / 60) * Math.PI / 30) - Math.PI / 2, radius * 0.74, 5, "#17211f");
+      // Hour Hand (smoothly incorporates fractional minute)
+      drawHand(((time.hour % 12) * Math.PI / 6) - Math.PI / 2, radius * 0.52, 7, "#17211f");
+      // Minute Hand (smoothly incorporates fractional second)
+      drawHand((time.minute * Math.PI / 30) - Math.PI / 2, radius * 0.74, 5, "#17211f");
+      // Second Hand (smooth continuous sweep)
       drawHand((time.second * Math.PI / 30) - Math.PI / 2, radius * 0.8, 2, accentColor);
+      
       context.fillStyle = accentColor;
       context.beginPath();
       context.arc(center, center, 7, 0, 2 * Math.PI);
